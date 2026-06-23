@@ -1,0 +1,168 @@
+//@version=5
+indicator(title='Trend Predictor AI alerts v 2.1.0', overlay=true)
+
+candle_size = input(20.0)
+
+
+signal_length = input.int(title='Signal Smoothing', minval=1, maxval=200, defval=11)
+sma_signal = input(title='Simple MA (Signal Line)', defval=true)
+
+lin_reg = input(title='Lin Reg', defval=true)
+linreg_length = input.int(title='Linear Regression Length', minval=1, maxval=200, defval=11)
+
+bopen = lin_reg ? ta.linreg(open, linreg_length, 0) : open
+bhigh = lin_reg ? ta.linreg(high, linreg_length, 0) : high
+blow = lin_reg ? ta.linreg(low, linreg_length, 0) : low
+bclose = lin_reg ? ta.linreg(close, linreg_length, 0) : close
+
+r = bopen < bclose
+
+signal = sma_signal ? ta.sma(bclose, signal_length) : ta.ema(bclose, signal_length)
+
+plotcandle(r ? bopen : na, r ? bhigh : na, r ? blow : na, r ? bclose : na, title='LinReg Candles', color=color.green, wickcolor=color.green, bordercolor=color.green, editable=true)
+plotcandle(r ? na : bopen, r ? na : bhigh, r ? na : blow, r ? na : bclose, title='LinReg Candles', color=color.red, wickcolor=color.red, bordercolor=color.red, editable=true)
+
+plot(signal, color=color.new(color.blue, 0))
+// Inputs
+a = input(2, title='Key Vaule. \'This changes the sensitivity\'')
+c = input(2, title='ATR Period')
+h = input(false, title='Signals from Heikin Ashi Candles')
+
+xATR = ta.atr(c)
+nLoss = a * xATR
+
+src = h ? request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, lookahead=barmerge.lookahead_off) : close
+
+xATRTrailingStop = 0.0
+iff_1 = src > nz(xATRTrailingStop[1], 0) ? src - nLoss : src + nLoss
+iff_2 = src < nz(xATRTrailingStop[1], 0) and src[1] < nz(xATRTrailingStop[1], 0) ? math.min(nz(xATRTrailingStop[1]), src + nLoss) : iff_1
+xATRTrailingStop := src > nz(xATRTrailingStop[1], 0) and src[1] > nz(xATRTrailingStop[1], 0) ? math.max(nz(xATRTrailingStop[1]), src - nLoss) : iff_2
+
+pos = 0
+iff_3 = src[1] > nz(xATRTrailingStop[1], 0) and src < nz(xATRTrailingStop[1], 0) ? -1 : nz(pos[1], 0)
+pos := src[1] < nz(xATRTrailingStop[1], 0) and src > nz(xATRTrailingStop[1], 0) ? 1 : iff_3
+
+xcolor = pos == -1 ? color.red : pos == 1 ? color.green : color.blue
+
+ema = ta.ema(src, 1)
+above = ta.crossover(ema, xATRTrailingStop)
+below = ta.crossover(xATRTrailingStop, ema)
+
+buy = src > xATRTrailingStop and above and ((bhigh - blow) > candle_size) and bclose > bopen
+sell = src < xATRTrailingStop and below and ((bhigh - blow) > candle_size) and bclose < bopen
+
+barbuy = src > xATRTrailingStop
+barsell = src < xATRTrailingStop
+
+// plotshape(buy, title='Buy', text='Buy', style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), textcolor=color.new(color.white, 0), size=size.tiny)
+// plotshape(sell, title='Sell', text='Sell', style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), textcolor=color.new(color.white, 0), size=size.tiny)
+
+
+Stop = input(100.0, title='Stop Loss')
+
+ProfitPerc = input(defval=100.0, title='TARGET')
+
+
+long_short = 0
+long_last = buy and (nz(long_short[1]) == 0 or nz(long_short[1]) == -1)
+short_last = sell and (nz(long_short[1]) == 0 or nz(long_short[1]) == 1)
+long_short := long_last ? 1 : short_last ? -1 : long_short[1]
+
+long_entered = false
+long_entered := long_entered[1]
+
+short_entered = false
+short_entered := short_entered[1]
+
+
+longPrice = ta.valuewhen(buy and not long_entered, close, 0)
+
+
+shortPrice = ta.valuewhen(sell and not short_entered, close, 0)
+
+
+
+
+longStop = longPrice - Stop
+shortStop =  shortPrice + Stop
+
+
+
+longTake = longPrice + ProfitPerc
+shortTake = shortPrice - ProfitPerc
+
+plot(long_short == 1 ? longStop : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=1, title='Long Fixed SL')
+plot(long_short == -1 ? shortStop : na, style=plot.style_linebr, color=color.new(color.red, 0), linewidth=1, title='Short Fixed SL')
+plot(long_short == 1 ? longTake : na, style=plot.style_linebr, color=color.new(color.navy, 0), linewidth=1, title='Long Fixed TP')
+plot(long_short == -1 ? shortTake : na, style=plot.style_linebr, color=color.new(color.navy, 0), linewidth=1, title='Short Fixed TP')
+
+
+longBar1 = ta.barssince(long_last)
+longBar2 = longBar1 >= 1 ? true : false
+shortBar1 = ta.barssince(short_last)
+shortBar2 = shortBar1 >= 1 ? true : false
+
+longSLhit = long_short == 1 and longBar2 and low < longStop
+
+//if(long_entered and  sellSignal)
+    //longSLhit := true
+
+plotshape(longSLhit and not(sell and not short_entered and long_entered), style=shape.labelup, location=location.belowbar, color=color.new(color.gray, 0), size=size.tiny, title='Stop Loss', text='Long SL', textcolor=color.new(color.white, 0))
+shortSLhit = long_short == -1 and shortBar2 and high > shortStop
+
+
+//if(short_entered and buySignal)
+    //shortSLhit := true
+
+plotshape(shortSLhit and not(buy and not long_entered and short_entered), style=shape.labeldown, location=location.abovebar, color=color.new(color.gray, 0), size=size.tiny, title='Stop Loss', text='Short SL', textcolor=color.new(color.white, 0))
+
+
+longTPhit = long_short == 1 and longBar2 and high > longTake
+plotshape(longTPhit, style=shape.labeldown, location=location.abovebar, color=color.new(color.navy, 0), size=size.tiny, title='Target', text='Long TP', textcolor=color.new(color.white, 0))
+shortTPhit = long_short == -1 and shortBar2 and low < shortTake
+plotshape(shortTPhit, style=shape.labelup, location=location.belowbar, color=color.new(color.navy, 0), size=size.tiny, title='Target', text='Short TP', textcolor=color.new(color.white, 0))
+
+long_short := (long_short == 1 or long_short == 0) and longBar2 and (longSLhit or longTPhit) ? 0 : (long_short == -1 or long_short == 0) and shortBar2 and (shortSLhit or shortTPhit) ? 0 : long_short
+
+
+plotshape(buy and not long_entered, color=color.new(color.green, 0), style=shape.labelup, text='Buy', textcolor=color.new(color.white, 0), location=location.belowbar)
+plotshape(sell and not short_entered, color=color.new(color.red, 0), style=shape.labeldown, text='Sell', textcolor=color.new(color.white, 0), location=location.abovebar)
+
+
+// plotshape(buy and not(long_entered) and (short_entered), color = color.green , style = shape.labelup , text = "FA Buy" , textcolor = color.white , location = location.belowbar)
+// plotshape(sell and not(short_entered)  and (long_entered), color = color.red , style = shape.labeldown , text = "FA Sell" , textcolor = color.white , location = location.abovebar)
+
+
+// alertcondition(condition=buy and  not(long_entered)  and (short_entered), title="Fully Algo Buy")
+// alertcondition(condition=sell and  not(short_entered)  and (long_entered), title="Fully Algo sell")
+
+alertcondition(condition=buy and not long_entered, title='Buy')
+alertcondition(condition=sell and not short_entered, title='Sell')
+
+if long_last
+    long_entered := true
+    short_entered := false
+    short_entered
+if short_last
+    short_entered := true
+    long_entered := false
+    long_entered
+
+alertcondition(condition=(longSLhit or shortSLhit) and not(sell and not short_entered and long_entered), title='Long/Short SL')
+//alertcondition(condition= shortSLhit and not (buy and  not(long_entered)  and (short_entered)), title="Short SL")
+
+alertcondition(condition=longTPhit or shortTPhit, title='Long/short TP')
+//alertcondition(condition=shortTPhit, title="Short TP")
+
+if longSLhit or longTPhit
+    long_entered := false
+    long_entered
+
+if shortSLhit or shortTPhit
+    short_entered := false
+    short_entered
+
+
+exit = longTPhit or shortTPhit or longSLhit or shortSLhit
+
+
